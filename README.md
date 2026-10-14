@@ -4,6 +4,18 @@
 
 项目提供 Tkinter 图形界面，也提供命令行入口，适合个人账号管理和定期查询。
 
+## 下载
+
+不想配置 Python 环境的话，可以直接下载打包好的 Windows 可执行文件：
+
+**[⬇ 下载 OpenGameCredit.exe](https://github.com/xiaoxiao919/OpenGameCredit/releases/latest/download/OpenGameCredit.exe)**
+
+- 单文件绿色版，双击即用，无需安装 Python 或任何依赖
+- 首次运行若出现 SmartScreen“未知发布者”提示，点击“更多信息”→“仍要运行”即可
+- 所有历史版本见 [Releases](https://github.com/xiaoxiao919/OpenGameCredit/releases)
+
+想自己打包或改代码，请继续看下面的安装步骤。
+
 ## 功能
 
 - QQ 扫码登录并保存游戏信用分凭据

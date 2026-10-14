@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# 运行时生成
+qr.png
+debug_*.html
+*.log
+
+# 账号凭据（绝不提交）
+*.db
+*.db-wal
+*.db-shm
+.key
+key
+rescue_last_login.json
+
+# 抓包附件（含真实登录凭据，绝不提交）
+.opensquilla/
+
+# 本地自检脚本（内含真实抓包样本，不随仓库发布）
+selftest.py

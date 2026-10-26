@@ -94,3 +94,56 @@ def query_login_status(gs_id: str, gs_code: str, timeout=15) -> dict:
         return j.get("data") or {}
     except Exception:
         return {}
+
+
+# ── 单码登录（QQ 互联 token）专用 ────────────────────────────────
+TOKEN_APPID = "101477677"        # 单码登录用的 QQ 互联 appid（pt_3rd_aid）
+
+
+def query_credit_token(openid: str, token: str, appid: str = TOKEN_APPID,
+                       timeout=15) -> QueryResult:
+    """用 openid + access_token 查信用分，不需要 gs_id/gs_code。
+
+    ★ 凭据全在 Cookie 里：acctype=qq;appid=<签发方>;openid=…;access_token=…
+    ★ appid 必须与 token 的签发方一致：pay 侧(101502376)的票配 101477677
+      会稳定返回 err=-6 <auth failed>，实测过。
+    """
+    cookie = f"acctype=qq;appid={appid};openid={openid};access_token={token}"
+    try:
+        r = requests.get(QUERY_URL, headers={
+            "User-Agent": UA,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate",
+            "Referer": REFERER,
+            "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Cookie": cookie,
+        }, timeout=timeout, allow_redirects=False)
+    except requests.RequestException as e:
+        return QueryResult(False, reason=f"网络错误 {type(e).__name__}: {e}")
+
+    if r.status_code in (301, 302, 303, 307, 308):
+        return QueryResult(False, reason=f"被重定向({r.status_code})，token 可能已失效",
+                           expired=True)
+    if r.status_code != 200:
+        return QueryResult(False, reason=f"HTTP {r.status_code}")
+
+    try:
+        j = r.json()
+    except ValueError:
+        return QueryResult(False, reason=f"响应非 JSON: {r.text[:120]}")
+
+    err = j.get("err")
+    if err != 0:
+        # token 失效同样是 -6，可直接当"需重新扫码"
+        return QueryResult(False, reason=f"err={err} {j.get('errmsg', '')}",
+                           expired=(err == -6))
+
+    d = j.get("data") or {}
+    return QueryResult(True,
+                       score=int(d.get("score", 0)),
+                       mtime=int(d.get("mtime", 0)),
+                       rank=float(d.get("rank", 0.0)),
+                       stars=int(d.get("stars", 0)))

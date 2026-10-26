@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS accounts(
   login_at INTEGER DEFAULT 0, query_at INTEGER DEFAULT 0, note TEXT DEFAULT '',
   pay_openid TEXT DEFAULT '', pay_token TEXT DEFAULT '', pay_refresh TEXT DEFAULT '',
   pay_exp_ts INTEGER DEFAULT 0, qb INTEGER DEFAULT 0, qb_prev INTEGER DEFAULT NULL,
-  qb_mtime INTEGER DEFAULT 0
+  qb_mtime INTEGER DEFAULT 0,
+  bw TEXT DEFAULT '', bw_msg TEXT DEFAULT '', bw_at INTEGER DEFAULT 0,
+  oa_openid TEXT DEFAULT '', oa_token TEXT DEFAULT '', oa_appid TEXT DEFAULT '',
+  oa_exp INTEGER DEFAULT 0
 );"""
 
 
@@ -79,7 +82,14 @@ def _migrate(c):
                       ("pay_exp_ts",  "INTEGER DEFAULT 0"),
                       ("qb",          "INTEGER DEFAULT 0"),
                       ("qb_prev",     "INTEGER DEFAULT NULL"),
-                      ("qb_mtime",    "INTEGER DEFAULT 0")):
+                      ("qb_mtime",    "INTEGER DEFAULT 0"),
+                      ("bw",          "TEXT DEFAULT ''"),
+                      ("bw_msg",      "TEXT DEFAULT ''"),
+                      ("bw_at",       "INTEGER DEFAULT 0"),
+                      ("oa_openid",   "TEXT DEFAULT ''"),
+                      ("oa_token",    "TEXT DEFAULT ''"),
+                      ("oa_appid",    "TEXT DEFAULT ''"),
+                      ("oa_exp",      "INTEGER DEFAULT 0")):
         if col not in have:
             c.execute(f"ALTER TABLE accounts ADD COLUMN {col} {decl}")
 
@@ -154,7 +164,43 @@ def all_accounts():
         x["pay_openid"] = _dec(x["pay_openid"])
         x["pay_token"] = _dec(x["pay_token"])
         x["pay_refresh"] = _dec(x["pay_refresh"])
+        x["oa_openid"] = _dec(x.get("oa_openid", ""))
+        x["oa_token"] = _dec(x.get("oa_token", ""))
     return rows
+
+
+def update_oauth(qq, openid, token, appid, exp_ts):
+    """写入单码登录（QQ 互联 token）。openid/token 加密落盘，与 pay_* 同等对待。"""
+    with conn() as c:
+        c.execute("""UPDATE accounts SET oa_openid=?, oa_token=?, oa_appid=?, oa_exp=?
+                     WHERE qq=?""",
+                  (_enc(openid), _enc(token), str(appid), int(exp_ts), qq))
+
+
+def update_qb_value(qq, qb):
+    """只更新 Q币余额与历史值，不碰 pay_* 凭据。
+
+    ★ 单码登录的 token 属于 101477677，和 pay_*(101502376) 不是一回事，
+      不能写进 pay_*，否则下次查币/查黑白会拿错 appid。
+    """
+    with conn() as c:
+        c.execute("""UPDATE accounts SET
+                       qb_prev=CASE WHEN qb_mtime > 0 THEN qb ELSE NULL END,
+                       qb=?, qb_mtime=? WHERE qq=?""",
+                  (int(qb), int(time.time()), qq))
+
+
+def ensure_account(qq, nick=""):
+    """扫码后保证账号行存在；已存在则只在昵称为空时补全，绝不覆盖已有凭据。"""
+    with conn() as c:
+        row = c.execute("SELECT 1 FROM accounts WHERE qq=?", (qq,)).fetchone()
+        if not row:
+            c.execute("""INSERT INTO accounts(qq,nick,gs_id,gs_code,exp_ts,state,login_at)
+                         VALUES(?,?,'','',0,'never',?)""",
+                      (qq, nick or "", int(time.time())))
+        elif nick:
+            c.execute("UPDATE accounts SET nick=? WHERE qq=? AND (nick IS NULL OR nick='')",
+                      (nick, qq))
 
 def update_result(qq, res, state, err=""):
     with conn() as c:
@@ -172,6 +218,18 @@ def update_result(qq, res, state, err=""):
 def delete(qq):
     with conn() as c:
         c.execute("DELETE FROM accounts WHERE qq=?", (qq,))
+
+
+def update_bw(qq, verdict, msg="", ret=0):
+    """写入黑白判定结果。verdict ∈ 白/黑/失效/未知。
+
+    ★ 单独一张字段，不碰 state —— state 表示「凭据/查询状态」，
+      黑白是账号属性，两者语义不同，混用会让「凭据过期」把黑白覆盖掉。
+    """
+    with conn() as c:
+        c.execute("""UPDATE accounts SET bw=?, bw_msg=?, bw_at=?
+                     WHERE qq=?""",
+                  (verdict, (msg or "")[:200], int(time.time()), qq))
 
 def update_pay(qq, openid, token, refresh, exp_ts, qb, nick=None):
     """写入 pay 侧凭据 + Q币数量。openid/token/refresh 加密落盘。

@@ -18,12 +18,14 @@
 
 ## 功能
 
-- QQ 扫码登录并保存游戏信用分凭据
-- 支持信用分登录和支付（Q 币）授权两种扫码目标
+- **一码两查**：扫一次码同时授权信用分、Q 币和黑白，不用再分别扫码
 - 批量查询信用分，支持并发数设置、请求限速、重试和连续失败熔断
 - 查询和刷新 Q 币余额
-- 表格显示序号、昵称、QQ、上次 Q 币、当前 Q 币、Q 币变化、上次信用分、当前信用分和变化；首次登录时“上次”显示 `-`
-- 显示已授权账号的 Q 币总数
+- 黑白号检测（依据活动接口应答判定，仅供参考，非官方评级）
+- 表格显示序号、昵称、QQ、状态、黑白、上次 Q 币、当前 Q 币、Q 币变化、上次信用分、当前信用分和变化；首次登录时“上次”显示 `-`
+- 底部统计条：账号数、Q 币总额、分数分布、黑/白数量
+- 支持按昵称 / QQ 实时搜索过滤，点击表头排序（再点一次切换升降序）
+- 卡片式浅色界面，窗口按内容定尺寸后锁定，不会误拉伸
 - 账号数据导出为 CSV，兼容 Excel 中文显示
 - 从 CSV 导入账号，按 QQ号 新增或更新，不覆盖已有登录凭据
 - 凭据过期检测、查询失败提示和账号删除
@@ -58,12 +60,15 @@ python app.py
 
 使用流程：
 
-1. 在右侧选择“信用分”或“支付”。
-2. 点击“获取二维码”，使用手机 QQ 扫码并确认。
-3. 信用分登录成功后，账号会加入左侧列表。
-4. 支付授权成功后，可以查询该账号的 Q 币余额。
-5. 使用“查分”批量刷新信用分，使用“查币”批量刷新 Q 币余额。
-6. 可使用“导出 CSV”保存当前账号数据。
+1. 点击右侧「获取二维码」，用手机 QQ 扫码并确认。
+2. 扫码成功后账号自动加入列表，并立刻查询它的信用分、Q 币和黑白。
+3. 用「查分 / 查币 / 查黑白」批量刷新全部账号。
+4. 可用「导出 CSV」保存当前账号数据。
+
+扫描用的是一次性 QQ 互联 H5 授权：同一份 `openid + access_token` 会被三处复用——
+信用分走 Cookie（`acctype=qq;appid=101477677;openid=…;access_token=…`）、
+Q 币走 `session_type=kp_accesstoken` 的 `openkey`、
+黑白走活动接口的同名 Cookie。凭据有效期约 60 天。
 
 ## 命令行
 
@@ -135,14 +140,14 @@ python cli.py rescue
 
 在 Windows 上可打包成免安装的单文件 OpenGameCredit.exe：
 
-`ash
+`bash
 python -m pip install pyinstaller
 build_exe.bat
 `
 
 或手动执行：
 
-`ash
+`bash
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name OpenGameCredit --hidden-import cryptography --hidden-import PIL._tkinter_finder app.py
 `
 
@@ -174,21 +179,36 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name OpenGameCr
 检查所有脚本语法：
 
 ```bash
-python -m py_compile app.py cli.py login.py pay.py query.py store.py utils.py worker.py
+python -m py_compile app.py cli.py login.py login_oauth.py bw.py pay.py query.py store.py utils.py worker.py
 ```
 
 ## 项目结构
 
 | 文件 | 作用 |
 | --- | --- |
-| `app.py` | Tkinter 图形界面 |
+| `app.py` | Tkinter 图形界面（v2 卡片式布局） |
 | `cli.py` | 命令行入口 |
-| `login.py` | QQ 扫码登录和 OAuth 授权流程 |
-| `query.py` | 游戏信用分查询接口 |
-| `pay.py` | Q 币授权、余额查询和刷新 |
+| `login_oauth.py` | **单码登录**：一次扫码换取 openid / access_token / QQ 号 |
+| `login.py` | 旧版 QQ 扫码登录（双目标），保留供 `cli.py` 使用 |
+| `bw.py` | 黑白号检测（活动接口探针 + 三分类判定） |
+| `query.py` | 游戏信用分查询接口（含 token 版） |
+| `pay.py` | Q 币授权、余额查询、用户信息 |
 | `store.py` | SQLite 数据库、凭据加密和数据迁移 |
 | `worker.py` | 批量刷新调度、限速、重试和熔断 |
 | `utils.py` | 编码、哈希、JWT 和登录协议辅助函数 |
+
+## 更新日志
+
+### v2.0.0
+
+- **一码两查**：移除「信用分 / 支付」二选一扫码，改为一次 QQ 互联授权同时覆盖信用分、Q 币、黑白
+- 新增 `login_oauth.py`：扫码 → `ptqrshow` / `ptqrlogin` → 回调取 `openid` / `access_token` → `unipay cmd=1` 换 QQ 号与昵称
+- 新增「黑白」列与「查黑白」按钮，判定规则：`仓库券礼包领取参数不满足` → 白；`活动太火爆…` → 失效；其它（如 `账号存在异常`）→ 黑
+- 界面重做：卡片式浅色仪表盘、顶栏状态胶囊、圆角按钮、分数分布条、悬停提示
+- 表格新增「状态」「黑白」列，支持搜索过滤与表头升降序排序
+- 窗口按内容定尺寸并锁定，不允许拉伸
+- 数据库新增 `oa_*`（单码凭据）与 `bw` / `bw_msg` / `bw_at`（黑白结果）字段，旧库自动迁移
+- 旧账号（`gs_code` / `pay_*`）仍可继续使用，三条查询会按可用凭据自动选择
 
 ## 注意事项
 

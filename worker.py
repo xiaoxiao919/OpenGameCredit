@@ -5,10 +5,12 @@ from query import query_credit
 from utils import jwt_exp
 
 class Scheduler:
-    def __init__(self, workers=3, min_interval=0.3, breaker=5):
+    def __init__(self, workers=3, min_interval=0.3, breaker=5, query=None):
         self.workers = min(workers, 5)
         self.min_interval = min_interval
         self.breaker = breaker          # 连续 N 个失败 → 熔断
+        # ★ 查询函数可注入：单码账号走 token 查分，老账号走 gs_id/gs_code
+        self.query = query or (lambda a: query_credit(a["gs_id"], a["gs_code"]))
         self._lock = threading.Lock()
         self._last = 0.0
         self._consec_fail = 0
@@ -24,14 +26,14 @@ class Scheduler:
     def _one(self, acc):
         if self.stop_flag: return acc, None, "已取消"
         # ★ 发请求前先查 exp，过期的一个包都不发
-        exp = jwt_exp(acc["gs_code"])
+        exp = jwt_exp(acc.get("gs_code", "")) or int(acc.get("oa_exp", 0) or 0)
         if exp and exp <= time.time():
             return acc, None, "凭据已过期"
 
         for attempt in range(3):
             if self.stop_flag: return acc, None, "已取消"
             self._throttle()
-            res = query_credit(acc["gs_id"], acc["gs_code"])
+            res = self.query(acc)
             if res.ok:
                 with self._lock: self._consec_fail = 0
                 return acc, res, ""

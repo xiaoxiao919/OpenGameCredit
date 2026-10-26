@@ -116,3 +116,38 @@ def refresh_qb(openid, token, log=lambda *a: None):
     """用已保存的 openid + access_token 直接查余额（无需重新扫码）。
        返回 {qb_balance, qd_balance, q币}，token 失效抛 PayError。"""
     return query_qb(openid, token, log)
+
+
+def userinfo(openid, openkey, timeout=15):
+    """cmd=1：拿昵称 + QQ 号（provide_uin）。
+
+    ★ 单码登录唯一的 QQ 号来源：ptuiCB 第 7 位是空、Cookie 里也只有 qrsig，
+      credit/login_status 都不给 uin，只有这里返回 provide_uin。
+      实测：{"ret":0,"nick":"%E4%BB%A4...","provide_uin":"2781743050"}
+    """
+    url = WECHAT_QUERY_URL + "?" + build_query([
+        ("cmd", "1"), ("pf", "vip_m-pay_html5-html5"), ("pfkey", "pfkey"),
+        ("from_h5", "1"), ("from_https", "1"),
+        ("openid", openid), ("openkey", openkey),
+        ("session_id", "openid"), ("session_type", "kp_accesstoken"),
+        ("qq_appid", PAY_CLIENT_ID)])
+
+    try:
+        r = requests.get(url, headers={
+            "User-Agent": UA, "Accept": "*/*",
+            "Referer": "https://my.pay.qq.com/"}, timeout=timeout)
+    except requests.RequestException as e:
+        raise PayError(f"userinfo 网络错误 {type(e).__name__}: {e}")
+    if r.status_code != 200:
+        raise PayError(f"userinfo HTTP {r.status_code}")
+    try:
+        j = r.json()
+    except ValueError:
+        raise PayError(f"userinfo 非 JSON：{r.text[:200]}")
+    if j.get("ret") != 0:
+        raise PayError(f"userinfo ret={j.get('ret')} msg={j.get('msg')}")
+    uin = str(j.get("provide_uin") or "")
+    if not uin:
+        raise PayError(f"userinfo 未返回 provide_uin：{j}")
+    from urllib.parse import unquote
+    return {"uin": uin, "nick": unquote(j.get("nick") or "")}

@@ -23,6 +23,19 @@ debug_*.html
 key
 rescue_last_login.json
 
+# 一码两查验证脚本的产物（oneqr_creds.json 里是明文 access_token）
+oneqr_creds.json
+oneqr_result.json
+oneqr_qr*.png
+blackwhite_result.json
+
+# 逆向验证脚本（本地留存，不随仓库发布）
+test_oneqr.py
+test_blackwhite.py
+
+# 助手工作目录（含会话记录）
+.workbuddy/
+
 # 抓包附件（含真实登录凭据，绝不提交）
 .opensquilla/
 

@@ -1,4 +1,4 @@
-"""app.py — OpenGameCredit v2.0.0 图形界面
+"""app.py — OpenGameCredit v2.0.1 图形界面
 
    启动: python app.py
 
@@ -25,7 +25,7 @@ THEME = "clam"          # vista 主题无法自定义配色，换 clam 才能做
 
 QR_PX = 148             # 二维码显示边长（NEAREST 放大保持锐利）
 POLL_MS = 60            # UI 事件队列轮询间隔
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 ELLIPSIS = "..."
 
 # ── 设计令牌 ───────────────────────────────────────────

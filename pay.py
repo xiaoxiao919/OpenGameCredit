@@ -29,6 +29,10 @@ class PayError(Exception):
     pass
 
 
+class PayAuthError(PayError):
+    """支付侧 token 被服务端拒绝（实测 ret=1018），需要重新扫码授权。"""
+
+
 def exchange_code(code, log=lambda *a: None):
     """用一次性 code 换 access_token/openid/refresh_token。
 
@@ -68,7 +72,14 @@ def exchange_code(code, log=lambda *a: None):
 
 
 def query_qb(openid, openkey, log=lambda *a: None):
-    """查余额。返回 dict: {ret, qb_balance(Q点), qd_balance(Q点), q币(换算后)}"""
+    """查余额。返回 dict: {ret, qb_balance(Q点), qd_balance(Q点), q币(换算后)}
+
+    ★ ret != 0 必须抛错，不能当成余额 0。
+      实测：access_token 失效时接口返回
+      _getQBBalance({"ret":1018,"msg":"对不起，系统繁忙，请稍后再试"})
+      —— 响应里根本没有 qb_balance。早期版本用 j.get("qb_balance", 0)
+      会把失效静默成 0.00，并把这个 0 写进数据库覆盖真实余额。
+    """
     url = WECHAT_QUERY_URL + "?" + build_query([
         ("cmd", "4"), ("pf", "vip_m-pay_html5-html5"), ("pfkey", "pfkey"),
         ("from_h5", "1"), ("from_https", "1"), ("format", "jsonp__getQBBalance"),
@@ -90,8 +101,18 @@ def query_qb(openid, openkey, log=lambda *a: None):
         j = json.loads(m.group(1))
     except ValueError:
         raise PayError(f"wechat_query JSON 解析失败：{r.text[:300]}")
-    qb_point = int(j.get("qb_balance", 0))
-    return {"ret": j.get("ret"), "qb_balance": qb_point,
+
+    ret = j.get("ret")
+    if ret != 0:
+        msg = (j.get("msg") or "").strip()
+        if ret == 1018:
+            raise PayAuthError(f"Q币凭据已失效(ret=1018 {msg})，请重新扫码授权")
+        raise PayError(f"wechat_query ret={ret} {msg}")
+    if "qb_balance" not in j:
+        raise PayError(f"wechat_query 成功但缺 qb_balance：{r.text[:200]}")
+
+    qb_point = int(j["qb_balance"])
+    return {"ret": ret, "qb_balance": qb_point,
             "qd_balance": int(j.get("qd_balance", 0)),
             "q币": qb_point / 100.0}
 

@@ -989,7 +989,7 @@ class App:
             self._set_buttons(True)
             self._update_summary()
             self.status_chip.set("就绪", "ok")
-            self._log(f"单码查询完成 QQ {ev[1]}（信用分 / Q币 / 黑白）")
+            self._log(f"QQ {ev[1]} 登录后自动查询全部完成（信用分 / Q币 / 黑白）")
 
     def _paint_row(self, qq, res, err):
         iid = next((i for i, v in self.rows.items() if v == qq), None)
@@ -1038,22 +1038,28 @@ class App:
 
     # ── 动作 ───────────────────────────────────────────
     def _on_oauth_ok(self, res):
-        """单码登录成功：存凭据 → 刷新表格 → 后台把三条查询一次跑完。"""
+        """单码登录成功：存凭据 → 刷新表格 → 后台把三条查询一次跑完。
+
+        ★ 先起查询线程再弹模态框：messagebox 会阻塞本函数，
+          顺序反了就会变成「点了确定才开始查」。
+        """
+        is_new = not any(a["qq"] == res.qq for a in all_accounts())
         ensure_account(res.qq, res.nick)
         update_oauth(res.qq, res.openid, res.access_token, res.appid, res.exp_ts)
         self.reload_table(log=False)
-        self._log(f"单码登录成功 QQ {res.qq} {res.nick!r} · 凭据 {days_left(res.exp_ts)} 天")
+        self._log(f"单码登录成功 QQ {res.qq} {res.nick!r} · "
+                  f"{'新账号' if is_new else '重新授权'} · 凭据 {days_left(res.exp_ts)} 天")
+        self.status_chip.set("查询中…", "busy")
+        self.busy = True
+        self._set_buttons(False)
+        threading.Thread(target=self._query_all_after_login,
+                         args=(res,), daemon=True).start()
         messagebox.showinfo(
             "登录成功",
             f"QQ {res.qq}\n昵称 {res.nick}\n"
             f"已同时授权：信用分 / Q币 / 黑白\n"
-            f"（凭据约 {days_left(res.exp_ts)} 天有效，即将自动查询）",
+            f"（凭据约 {days_left(res.exp_ts)} 天有效，正在后台查询本账号）",
             parent=self)
-        self.status_chip.set("查询中…", "busy")
-        self.busy = True
-        self._set_buttons(False)
-        threading.Thread(target=self._query_all_after_login, args=(res,),
-                         daemon=True).start()
 
     def _query_all_after_login(self, res):
         """扫码后立即跑：信用分 → Q币 → 黑白，全都用这一份 token。
@@ -1062,12 +1068,15 @@ class App:
           main thread is not in main loop），日志也走事件队列。
         """
         qq = res.qq
+        nick = res.nick or qq
+        score_txt = "-"
+        qb_txt = "-"
         try:
             r = query_credit_token(res.openid, res.access_token, res.appid)
             if r.ok:
                 update_result(qq, r, "ok")
                 self.q.put(("row", qq, r, ""))
-                self.q.put(("log", f"信用分 {r.score}"))
+                score_txt = str(r.score)
             else:
                 state = "expired" if r.expired else "error"
                 update_result(qq, _EMPTY, state, r.reason)
@@ -1081,17 +1090,23 @@ class App:
             bal = query_qb(res.openid, res.access_token)
             update_qb_value(qq, bal["qb_balance"])
             self.q.put(("qb_row", qq, bal["qb_balance"], ""))
-            self.q.put(("log", f"Q币 {bal['q币']:.2f}"))
+            qb_txt = f"{bal['q币']:.2f}"
         except Exception as e:
             self.q.put(("log", f"Q币失败：{type(e).__name__}: {e}"))
 
+        bw_txt = "-"
         try:
             b = bw_check(res.openid, res.access_token, res.appid)
             update_bw(qq, b.verdict, b.msg or b.reason, b.ret)
             self.q.put(("bw_row", qq, b.verdict))
-            self.q.put(("log", f"黑白 {b.verdict}（{(b.msg or '')[:24]}）"))
+            bw_txt = b.verdict + "号" if b.verdict in (WHITE, BLACK) else b.verdict
         except Exception as e:
             self.q.put(("log", f"黑白失败：{type(e).__name__}: {e}"))
+
+        # 一行回执：信用分 / Q币 / 黑白，顺序与表格列一致
+        self.q.put(("log",
+                    f"已完成 QQ {qq}（{nick}）"
+                    f"信用分 {score_txt} / Q币 {qb_txt} / {bw_txt}"))
 
         self.q.put(("finish_login", qq))
 
@@ -1194,7 +1209,7 @@ class App:
         return acc.get("pay_openid", ""), acc.get("pay_token", ""), False
 
     def _run_refresh_qb(self, accs, n):
-        from pay import refresh_qb as _refresh_qb, PayError
+        from pay import refresh_qb as _refresh_qb, PayError, PayAuthError
         from store import update_pay
         stat = {"ok": 0, "fail": 0}
         total = len(accs)
@@ -1211,6 +1226,11 @@ class App:
                                bal["qb_balance"])
                 stat["ok"] += 1
                 self.q.put(("qb_row", a["qq"], bal["qb_balance"], ""))
+            except PayAuthError as e:
+                # token 被服务端拒绝：保留库里上一次的真实余额，不要写成 0
+                stat["fail"] += 1
+                self.q.put(("qb_row", a["qq"], None, str(e)[:60]))
+                self.q.put(("log", f"QQ {a['qq']} 查币失败：{e}"))
             except PayError as e:
                 stat["fail"] += 1
                 self.q.put(("qb_row", a["qq"], None, str(e)[:60]))
